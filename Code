@@ -1,0 +1,366 @@
+# BIKE RENTAL FORECASTING
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVR
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+
+# 1. LOAD DATA
+
+df = pd.read_csv("daily.csv")
+
+df["date"] = pd.to_datetime(df["date"])
+df = df.sort_values("date").reset_index(drop=True)
+
+
+# 2. CREATE FEATURES
+
+# Calendar features
+df["dow"] = df["date"].dt.dayofweek
+df["month"] = df["date"].dt.month
+df["doy"] = df["date"].dt.dayofyear
+
+# Cyclical calendar features
+df["dow_sin"] = np.sin(2 * np.pi * df["dow"] / 7)
+df["dow_cos"] = np.cos(2 * np.pi * df["dow"] / 7)
+df["doy_sin"] = np.sin(2 * np.pi * df["doy"] / 365)
+df["doy_cos"] = np.cos(2 * np.pi * df["doy"] / 365)
+
+# Rental history
+for lag in [1, 7, 14, 28]:
+    df[f"lag_{lag}"] = df["rentals"].shift(lag)
+
+# Rolling features
+for window in [7, 14, 28]:
+    df[f"roll_mean_{window}"] = (
+        df["rentals"].shift(1).rolling(window).mean()
+    )
+    df[f"roll_std_{window}"] = (
+        df["rentals"].shift(1).rolling(window).std()
+    )
+
+# One-day-ahead target
+df["target"] = df["rentals"].shift(-1)
+
+# Next-day calendar information
+df["next_date"] = df["date"].shift(-1)
+df["next_dow"] = df["next_date"].dt.dayofweek
+df["next_month"] = df["next_date"].dt.month
+df["next_doy"] = df["next_date"].dt.dayofyear
+
+df["next_dow_sin"] = np.sin(2 * np.pi * df["next_dow"] / 7)
+df["next_dow_cos"] = np.cos(2 * np.pi * df["next_dow"] / 7)
+df["next_doy_sin"] = np.sin(2 * np.pi * df["next_doy"] / 365)
+df["next_doy_cos"] = np.cos(2 * np.pi * df["next_doy"] / 365)
+
+df["next_holiday"] = df["holiday"].shift(-1)
+df["next_promotion"] = df["promotion"].shift(-1)
+
+
+# 3. SELECT FEATURES
+
+features = [
+    "temp_c", "rain", "humidity_pct", "wind_kmh",
+    "dow", "month", "doy",
+    "dow_sin", "dow_cos", "doy_sin", "doy_cos",
+    "lag_1", "lag_7", "lag_14", "lag_28",
+    "roll_mean_7", "roll_mean_14", "roll_mean_28",
+    "roll_std_7", "roll_std_14", "roll_std_28",
+    "next_dow", "next_month", "next_doy",
+    "next_dow_sin", "next_dow_cos",
+    "next_doy_sin", "next_doy_cos",
+    "next_holiday", "next_promotion"
+]
+
+df = df.dropna(subset=features + ["target"])
+
+
+# 4. TRAIN / VALIDATION / TEST
+
+train = df[df["date"].dt.year == 2021]
+validation = df[df["date"].dt.year == 2022]
+test = df[df["date"].dt.year == 2023]
+
+X_train = train[features]
+y_train = train["target"]
+
+X_validation = validation[features]
+y_validation = validation["target"]
+
+X_test = test[features]
+y_test = test["target"]
+
+
+# 5. MODELS
+
+models = {
+    "Linear Regression": LinearRegression(),
+
+    "Ridge Regression": Ridge(alpha=10),
+
+    "Random Forest": RandomForestRegressor(
+        n_estimators=300,
+        min_samples_leaf=3,
+        max_features="sqrt",
+        random_state=42,
+        n_jobs=-1
+    ),
+
+    "Gradient Boosting": GradientBoostingRegressor(
+        n_estimators=300,
+        learning_rate=0.03,
+        max_depth=2,
+        min_samples_leaf=5,
+        loss="huber",
+        random_state=42
+    ),
+
+    "SVR": Pipeline([
+        ("scaler", StandardScaler()),
+        ("svr", SVR(kernel="rbf", C=30, epsilon=0.1))
+    ])
+}
+
+
+# 6. EVALUATION FUNCTION
+
+def evaluate(model, X, y):
+    predictions = model.predict(X)
+
+    mae = mean_absolute_error(y, predictions)
+    rmse = np.sqrt(mean_squared_error(y, predictions))
+    r2 = r2_score(y, predictions)
+
+    return mae, rmse, r2, predictions
+
+
+# 7. VALIDATION
+
+validation_results = []
+
+for name, model in models.items():
+
+    model.fit(X_train, y_train)
+
+    mae, rmse, r2, _ = evaluate(
+        model, X_validation, y_validation
+    )
+
+    validation_results.append({
+        "Model": name,
+        "MAE": mae,
+        "RMSE": rmse,
+        "R2": r2
+    })
+
+validation_results_df = pd.DataFrame(validation_results)
+
+print("\nValidation Results:")
+print(validation_results_df.sort_values("RMSE").to_string(index=False))
+
+
+# 8. FINAL TRAINING
+
+train_validation = pd.concat([train, validation])
+
+X_train_final = train_validation[features]
+y_train_final = train_validation["target"]
+
+# Create fresh models
+final_models = {
+    "Linear Regression": LinearRegression(),
+    "Ridge Regression": Ridge(alpha=10),
+
+    "Random Forest": RandomForestRegressor(
+        n_estimators=300,
+        min_samples_leaf=3,
+        max_features="sqrt",
+        random_state=42,
+        n_jobs=-1
+    ),
+
+    "Gradient Boosting": GradientBoostingRegressor(
+        n_estimators=300,
+        learning_rate=0.03,
+        max_depth=2,
+        min_samples_leaf=5,
+        loss="huber",
+        random_state=42
+    ),
+
+    "SVR": Pipeline([
+        ("scaler", StandardScaler()),
+        ("svr", SVR(kernel="rbf", C=30, epsilon=0.1))
+    ])
+}
+
+
+# 9. TEST MODELS
+
+test_results = []
+
+all_predictions = pd.DataFrame({
+    "date": test["date"].values,
+    "actual": y_test.values
+})
+
+for name, model in final_models.items():
+
+    model.fit(X_train_final, y_train_final)
+
+    mae, rmse, r2, predictions = evaluate(
+        model, X_test, y_test
+    )
+
+    test_results.append({
+        "Model": name,
+        "MAE": mae,
+        "RMSE": rmse,
+        "R2": r2
+    })
+
+    all_predictions[name] = predictions
+
+
+# 10. BASELINES
+
+# Yesterday's rentals
+yesterday = test["lag_1"].values
+
+test_results.append({
+    "Model": "Naive - Yesterday",
+    "MAE": mean_absolute_error(y_test, yesterday),
+    "RMSE": np.sqrt(mean_squared_error(y_test, yesterday)),
+    "R2": r2_score(y_test, yesterday)
+})
+
+all_predictions["Naive - Yesterday"] = yesterday
+
+
+# Rentals from 7 days ago
+week = test["lag_7"].values
+
+test_results.append({
+    "Model": "Seasonal Naive - 7 Days",
+    "MAE": mean_absolute_error(y_test, week),
+    "RMSE": np.sqrt(mean_squared_error(y_test, week)),
+    "R2": r2_score(y_test, week)
+})
+
+all_predictions["Seasonal Naive - 7 Days"] = week
+
+
+# 11. FINAL RESULTS
+
+test_results_df = pd.DataFrame(test_results)
+test_results_df = test_results_df.sort_values("RMSE")
+
+print("\nFinal Test Results:")
+print(test_results_df.to_string(index=False))
+
+
+# 12. SAVE RESULTS
+
+os.makedirs("results/figures", exist_ok=True)
+
+validation_results_df.to_csv(
+    "results/validation_results.csv", index=False
+)
+
+test_results_df.to_csv(
+    "results/test_results.csv", index=False
+)
+
+all_predictions.to_csv(
+    "results/predictions.csv", index=False
+)
+
+
+# 13. RANDOM FOREST FEATURE IMPORTANCE
+
+rf = final_models["Random Forest"]
+
+importance_df = pd.DataFrame({
+    "Feature": features,
+    "Importance": rf.feature_importances_
+}).sort_values("Importance", ascending=False)
+
+importance_df.to_csv(
+    "results/feature_importance.csv", index=False
+)
+
+print("\nTop 10 Features:")
+print(importance_df.head(10).to_string(index=False))
+
+
+# 14. MODEL COMPARISON GRAPH
+
+plt.figure(figsize=(10, 6))
+plt.bar(test_results_df["Model"], test_results_df["RMSE"])
+plt.title("Model Comparison - RMSE")
+plt.xlabel("Model")
+plt.ylabel("RMSE")
+plt.xticks(rotation=45, ha="right")
+plt.tight_layout()
+plt.savefig("results/figures/model_comparison.png")
+plt.close()
+
+
+# 15. ACTUAL VS PREDICTED
+
+model_results = test_results_df[
+    test_results_df["Model"].isin(final_models.keys())
+]
+
+best_model = model_results.iloc[0]["Model"]
+predictions = all_predictions[best_model]
+
+plt.figure(figsize=(12, 6))
+plt.plot(all_predictions["date"], all_predictions["actual"], label="Actual")
+plt.plot(all_predictions["date"], predictions, label=best_model)
+plt.title("Actual vs Predicted Bike Rentals")
+plt.xlabel("Date")
+plt.ylabel("Bike Rentals")
+plt.legend()
+plt.tight_layout()
+plt.savefig("results/figures/actual_vs_predicted.png")
+plt.close()
+
+
+# 16. RESIDUAL PLOT
+
+residuals = all_predictions["actual"] - predictions
+
+plt.figure(figsize=(10, 6))
+plt.scatter(predictions, residuals)
+plt.axhline(0)
+plt.title("Residual Plot")
+plt.xlabel("Predicted Rentals")
+plt.ylabel("Actual - Predicted")
+plt.tight_layout()
+plt.savefig("results/figures/residuals.png")
+plt.close()
+
+
+# 17. FEATURE IMPORTANCE GRAPH
+
+top_features = importance_df.head(10)
+
+plt.figure(figsize=(10, 6))
+plt.barh(top_features["Feature"], top_features["Importance"])
+plt.title("Top 10 Random Forest Features")
+plt.xlabel("Importance")
+plt.ylabel("Feature")
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.savefig("results/figures/feature_importance.png")
+plt.close()
+
