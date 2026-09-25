@@ -301,20 +301,7 @@ print("\nTop 10 Features:")
 print(importance_df.head(10).to_string(index=False))
 
 
-# 14. MODEL COMPARISON GRAPH
-
-plt.figure(figsize=(10, 6))
-plt.bar(test_results_df["Model"], test_results_df["RMSE"])
-plt.title("Model Comparison - RMSE")
-plt.xlabel("Model")
-plt.ylabel("RMSE")
-plt.xticks(rotation=45, ha="right")
-plt.tight_layout()
-plt.savefig("results/figures/model_comparison.png")
-plt.close()
-
-
-# 15. ACTUAL VS PREDICTED
+# 14. ACTUAL VS PREDICTED
 
 model_results = test_results_df[
     test_results_df["Model"].isin(final_models.keys())
@@ -335,7 +322,7 @@ plt.savefig("results/figures/actual_vs_predicted.png")
 plt.close()
 
 
-# 16. RESIDUAL PLOT
+# 15. RESIDUAL PLOT
 
 residuals = all_predictions["actual"] - predictions
 
@@ -347,20 +334,5 @@ plt.xlabel("Predicted Rentals")
 plt.ylabel("Actual - Predicted")
 plt.tight_layout()
 plt.savefig("results/figures/residuals.png")
-plt.close()
-
-
-# 17. FEATURE IMPORTANCE GRAPH
-
-top_features = importance_df.head(10)
-
-plt.figure(figsize=(10, 6))
-plt.barh(top_features["Feature"], top_features["Importance"])
-plt.title("Top 10 Random Forest Features")
-plt.xlabel("Importance")
-plt.ylabel("Feature")
-plt.gca().invert_yaxis()
-plt.tight_layout()
-plt.savefig("results/figures/feature_importance.png")
 plt.close()
 
